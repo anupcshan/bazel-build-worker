@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
 	"io"
@@ -8,12 +9,12 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 
 	"github.com/anupcshan/bazel-build-worker/remote"
 
-	"github.com/golang/protobuf/jsonpb"
 	"github.com/golang/protobuf/proto"
 )
 
@@ -46,7 +47,11 @@ func ensureCached(cacheBaseURL string, file *build_remote.FileEntry, workDir str
 		return err
 	} else {
 		defer resp.Body.Close()
-		if f, err := os.OpenFile(filePath, os.O_CREATE, 0666); err != nil {
+		perm := os.FileMode(0644)
+		if file.Executable {
+			perm = 0755
+		}
+		if f, err := os.OpenFile(filePath, os.O_CREATE, perm); err != nil {
 			return err
 		} else {
 			defer f.Close()
@@ -60,7 +65,14 @@ func ensureCached(cacheBaseURL string, file *build_remote.FileEntry, workDir str
 func HandleBuildRequest(w http.ResponseWriter, r *http.Request) {
 	workReq := new(build_remote.RemoteWorkRequest)
 	workRes := new(build_remote.RemoteWorkResponse)
-	err := jsonpb.Unmarshal(r.Body, workReq)
+
+	b, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, workRes, err)
+		return
+	}
+
+	err = proto.Unmarshal(b, workReq)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, workRes, err)
 		return
@@ -82,6 +94,26 @@ func HandleBuildRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Println(workReq.Arguments)
+
+	cmd := exec.Command(workReq.Arguments[0], workReq.Arguments[1:]...)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	cmd.Dir = tmpDir
+
+	env := []string{}
+	for key, value := range workReq.GetEnvironment() {
+		env = append(env, fmt.Sprintf("%s=%s", key, value))
+	}
+	cmd.Env = env
+
+	err = cmd.Run()
+	if err != nil {
+		log.Println(stderr.String())
+		writeError(w, http.StatusOK, workRes, err)
+		return
+	}
 
 	writeError(w, http.StatusOK, workRes, fmt.Errorf("Not built"))
 }

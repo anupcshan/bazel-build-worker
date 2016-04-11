@@ -2,9 +2,10 @@ package main
 
 import (
 	"bytes"
+	"crypto/md5"
+	"encoding/hex"
 	"flag"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -18,17 +19,21 @@ import (
 	"github.com/golang/protobuf/proto"
 )
 
-func writeError(w http.ResponseWriter, statusCode int, workRes *build_remote.RemoteWorkResponse, err error) {
-	log.Println(err)
-	w.WriteHeader(statusCode)
-	workRes.Exception = err.Error()
-	workRes.Success = false
+func respond(w http.ResponseWriter, workRes *build_remote.RemoteWorkResponse) {
 	b, err := proto.Marshal(workRes)
 	if err != nil {
 		log.Println(err)
 	} else {
 		w.Write(b)
 	}
+}
+
+func writeError(w http.ResponseWriter, statusCode int, workRes *build_remote.RemoteWorkResponse, err error) {
+	log.Println(err)
+	w.WriteHeader(statusCode)
+	workRes.Exception = err.Error()
+	workRes.Success = false
+	respond(w, workRes)
 }
 
 func ensureCached(cacheBaseURL string, file *build_remote.FileEntry, workDir string) error {
@@ -42,7 +47,7 @@ func ensureCached(cacheBaseURL string, file *build_remote.FileEntry, workDir str
 		return err
 	}
 
-	fetchPath := fmt.Sprintf("%s/%s", cacheBaseURL, file.Path)
+	fetchPath := fmt.Sprintf("%s/%s", cacheBaseURL, file.ContentKey)
 	if resp, err := http.Get(fetchPath); err != nil {
 		return err
 	} else {
@@ -51,14 +56,59 @@ func ensureCached(cacheBaseURL string, file *build_remote.FileEntry, workDir str
 		if file.Executable {
 			perm = 0755
 		}
-		if f, err := os.OpenFile(filePath, os.O_CREATE, perm); err != nil {
+		if f, err := os.OpenFile(filePath, os.O_CREATE|os.O_WRONLY, perm); err != nil {
 			return err
 		} else {
 			defer f.Close()
-			_, err := io.Copy(f, resp.Body)
+			cacheEntry := new(build_remote.CacheEntry)
+
+			b, err := ioutil.ReadAll(resp.Body)
+			if err != nil {
+				return err
+			}
+			err = proto.Unmarshal(b, cacheEntry)
+			if err != nil {
+				return err
+			}
+			_, err = f.Write(cacheEntry.FileContent)
 			return err
 		}
 	}
+	return nil
+}
+
+func writeCacheEntry(cacheBaseURL string, key string, data []byte) error {
+	cacheEntry := new(build_remote.CacheEntry)
+	cacheEntry.FileContent = data
+	writePath := fmt.Sprintf("%s/%s", cacheBaseURL, key)
+	log.Println(writePath)
+	b, err := proto.Marshal(cacheEntry)
+	if err != nil {
+		return err
+	}
+	body := bytes.NewBuffer(b)
+	if resp, err := http.Post(writePath, "application/binary", body); err != nil {
+		return err
+	} else {
+		resp.Body.Close()
+	}
+
+	return nil
+}
+
+func writeActionCacheEntry(cacheBaseURL string, key string, cacheEntry *build_remote.CacheEntry) error {
+	writePath := fmt.Sprintf("%s/%s", cacheBaseURL, key)
+	log.Println(writePath)
+	b, err := proto.Marshal(cacheEntry)
+	if err != nil {
+		return nil
+	}
+	if resp, err := http.Post(writePath, "application/binary", bytes.NewBuffer(b)); err != nil {
+		return err
+	} else {
+		resp.Body.Close()
+	}
+
 	return nil
 }
 
@@ -110,18 +160,45 @@ func HandleBuildRequest(w http.ResponseWriter, r *http.Request) {
 
 	err = cmd.Run()
 	if err != nil {
-		log.Println(stderr.String())
+		workRes.Out = stdout.String()
+		workRes.Err = stderr.String()
 		writeError(w, http.StatusOK, workRes, err)
 		return
 	}
 
-	writeError(w, http.StatusOK, workRes, fmt.Errorf("Not built"))
+	workRes.Out = stdout.String()
+	workRes.Err = stderr.String()
+
+	outputActionCache := new(build_remote.CacheEntry)
+
+	for _, outputFile := range workReq.GetOutputFiles() {
+		filePath := filepath.Join(tmpDir, outputFile.Path)
+		if f, err := os.Open(filePath); err != nil {
+			writeError(w, http.StatusOK, workRes, err)
+			return
+		} else if b, err := ioutil.ReadAll(f); err != nil {
+			writeError(w, http.StatusOK, workRes, err)
+			return
+		} else {
+			checksum := md5.Sum(b)
+			writeCacheEntry(*cacheBaseURL, hex.EncodeToString(checksum[:md5.Size]), b)
+			outputFile.ContentKey = hex.EncodeToString(checksum[:md5.Size])
+			log.Println(outputFile)
+			outputActionCache.Files = append(outputActionCache.Files, outputFile)
+		}
+	}
+
+	writeActionCacheEntry(*cacheBaseURL, workReq.OutputKey, outputActionCache)
+
+	workRes.Success = true
+	w.WriteHeader(http.StatusOK)
+	respond(w, workRes)
 }
 
 func main() {
 	flag.Parse()
 
-	log.SetFlags(log.Lmicroseconds)
+	log.SetFlags(log.Lmicroseconds | log.Lshortfile)
 
 	listenAddr := fmt.Sprintf(":%d", *port)
 

@@ -14,11 +14,20 @@ import (
 	"github.com/anupcshan/bazel-build-worker/remote"
 
 	"github.com/golang/protobuf/jsonpb"
+	"github.com/golang/protobuf/proto"
 )
 
-func writeError(w http.ResponseWriter, statusCode int, err error) {
+func writeError(w http.ResponseWriter, statusCode int, workRes *build_remote.RemoteWorkResponse, err error) {
+	log.Println(err)
 	w.WriteHeader(statusCode)
-	fmt.Fprintf(w, "%v", err)
+	workRes.Exception = err.Error()
+	workRes.Success = false
+	b, err := proto.Marshal(workRes)
+	if err != nil {
+		log.Println(err)
+	} else {
+		w.Write(b)
+	}
 }
 
 func ensureCached(cacheBaseURL string, file *build_remote.FileEntry, workDir string) error {
@@ -50,15 +59,16 @@ func ensureCached(cacheBaseURL string, file *build_remote.FileEntry, workDir str
 
 func HandleBuildRequest(w http.ResponseWriter, r *http.Request) {
 	workReq := new(build_remote.RemoteWorkRequest)
+	workRes := new(build_remote.RemoteWorkResponse)
 	err := jsonpb.Unmarshal(r.Body, workReq)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
+		writeError(w, http.StatusInternalServerError, workRes, err)
 		return
 	}
 
 	tmpDir, err := ioutil.TempDir(*tmpDirRoot, "workdir")
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
+		writeError(w, http.StatusInternalServerError, workRes, err)
 		return
 	}
 
@@ -67,9 +77,13 @@ func HandleBuildRequest(w http.ResponseWriter, r *http.Request) {
 
 	for _, inputFile := range workReq.GetInputFiles() {
 		if err := ensureCached(*cacheBaseURL, inputFile, tmpDir); err != nil {
-			log.Println(err)
+			writeError(w, http.StatusInternalServerError, workRes, err)
 		}
 	}
+
+	log.Println(workReq.Arguments)
+
+	writeError(w, http.StatusOK, workRes, fmt.Errorf("Not built"))
 }
 
 func main() {

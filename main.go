@@ -13,7 +13,10 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"sync"
+	"time"
 
+	"github.com/anupcshan/bazel-build-worker/cache"
 	"github.com/anupcshan/bazel-build-worker/remote"
 
 	"github.com/golang/protobuf/proto"
@@ -76,13 +79,8 @@ func ensureCached(cacheBaseURL string, file *remote.FileEntry, cacheDir string) 
 	return nil
 }
 
-func linkCachedObject(cacheBaseURL string, file *remote.FileEntry, cacheDir string, workDir string) error {
-	if err := ensureCached(cacheBaseURL, file, cacheDir); err != nil {
-		return err
-	}
-
-	filePath := filepath.Join(workDir, file.Path)
-	cachePath := filepath.Join(cacheDir, file.ContentKey)
+func linkCachedObject(relPath string, workDir string, cachePath string) error {
+	filePath := filepath.Join(workDir, relPath)
 
 	dir := path.Dir(filePath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -125,7 +123,12 @@ func writeActionCacheEntry(cacheBaseURL string, key string, cacheEntry *remote.C
 	return nil
 }
 
-func HandleBuildRequest(w http.ResponseWriter, r *http.Request) {
+type BuildRequestHandler struct {
+	hazelcastCache cache.Cache
+	diskCache      *cache.DiskCache
+}
+
+func (bh *BuildRequestHandler) HandleBuildRequest(w http.ResponseWriter, r *http.Request) {
 	workReq := new(remote.RemoteWorkRequest)
 	workRes := new(remote.RemoteWorkResponse)
 
@@ -150,8 +153,19 @@ func HandleBuildRequest(w http.ResponseWriter, r *http.Request) {
 	log.Println("Creating workdir:", workDir)
 	defer os.RemoveAll(workDir)
 
+	var wg sync.WaitGroup
 	for _, inputFile := range workReq.GetInputFiles() {
-		if err := linkCachedObject(*cacheBaseURL, inputFile, *cacheDir, workDir); err != nil {
+		wg.Add(1)
+		go func(key string, executable bool) {
+			<-bh.diskCache.EnsureCached(key, executable, 10*time.Minute)
+			wg.Done()
+		}(inputFile.ContentKey, inputFile.Executable)
+	}
+
+	wg.Wait()
+
+	for _, inputFile := range workReq.GetInputFiles() {
+		if err := linkCachedObject(inputFile.Path, workDir, bh.diskCache.GetLink(inputFile.ContentKey)); err != nil {
 			writeError(w, http.StatusInternalServerError, workRes, err)
 			return
 		}
@@ -215,7 +229,12 @@ func main() {
 
 	listenAddr := fmt.Sprintf(":%d", *port)
 
-	http.HandleFunc("/", HandleBuildRequest)
+	hc := cache.NewHazelcastCache(*cacheBaseURL)
+	diskCache := cache.NewDiskCache(*cacheDir, hc)
+
+	buildRequestHandler := &BuildRequestHandler{hazelcastCache: hc, diskCache: diskCache}
+
+	http.HandleFunc("/", buildRequestHandler.HandleBuildRequest)
 
 	err := http.ListenAndServe(listenAddr, nil)
 	log.Fatal(err)

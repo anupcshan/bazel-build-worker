@@ -35,8 +35,8 @@ func writeError(w http.ResponseWriter, statusCode int, workRes *remote.RemoteWor
 	respond(w, workRes)
 }
 
-func ensureCached(cacheBaseURL string, file *remote.FileEntry, workDir string) error {
-	filePath := filepath.Join(workDir, file.Path)
+func ensureCached(cacheBaseURL string, file *remote.FileEntry, cacheDir string) error {
+	filePath := filepath.Join(cacheDir, file.ContentKey)
 	if _, err := os.Stat(filePath); err == nil || !os.IsNotExist(err) {
 		return nil
 	}
@@ -74,6 +74,22 @@ func ensureCached(cacheBaseURL string, file *remote.FileEntry, workDir string) e
 		}
 	}
 	return nil
+}
+
+func linkCachedObject(cacheBaseURL string, file *remote.FileEntry, cacheDir string, workDir string) error {
+	if err := ensureCached(cacheBaseURL, file, cacheDir); err != nil {
+		return err
+	}
+
+	filePath := filepath.Join(workDir, file.Path)
+	cachePath := filepath.Join(cacheDir, file.ContentKey)
+
+	dir := path.Dir(filePath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+
+	return os.Link(cachePath, filePath)
 }
 
 func writeCacheEntry(cacheBaseURL string, key string, data []byte) error {
@@ -125,18 +141,19 @@ func HandleBuildRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tmpDir, err := ioutil.TempDir(*tmpDirRoot, "workdir")
+	workDir, err := ioutil.TempDir(*workdirRoot, "workdir")
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, workRes, err)
 		return
 	}
 
-	log.Println("Creating workdir:", tmpDir)
-	defer os.RemoveAll(tmpDir)
+	log.Println("Creating workdir:", workDir)
+	defer os.RemoveAll(workDir)
 
 	for _, inputFile := range workReq.GetInputFiles() {
-		if err := ensureCached(*cacheBaseURL, inputFile, tmpDir); err != nil {
+		if err := linkCachedObject(*cacheBaseURL, inputFile, *cacheDir, workDir); err != nil {
 			writeError(w, http.StatusInternalServerError, workRes, err)
+			return
 		}
 	}
 
@@ -147,7 +164,7 @@ func HandleBuildRequest(w http.ResponseWriter, r *http.Request) {
 	var stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	cmd.Dir = tmpDir
+	cmd.Dir = workDir
 
 	env := []string{}
 	for key, value := range workReq.GetEnvironment() {
@@ -169,7 +186,7 @@ func HandleBuildRequest(w http.ResponseWriter, r *http.Request) {
 	outputActionCache := new(remote.CacheEntry)
 
 	for _, outputFile := range workReq.GetOutputFiles() {
-		filePath := filepath.Join(tmpDir, outputFile.Path)
+		filePath := filepath.Join(workDir, outputFile.Path)
 		if f, err := os.Open(filePath); err != nil {
 			writeError(w, http.StatusOK, workRes, err)
 			return
@@ -207,5 +224,6 @@ func main() {
 var (
 	port         = flag.Int("port", 1234, "Port to listen on")
 	cacheBaseURL = flag.String("cache-base-url", "http://localhost:5701/hazelcast/rest/maps/hazelcast-build-cache", "Base of cache URL to connect to")
-	tmpDirRoot   = flag.String("tmp-dir-root", "/tmp/", "Root of temporary directory")
+	workdirRoot  = flag.String("workdir-root", "/tmp/", "Directory to create working subdirectories to execute actions in")
+	cacheDir     = flag.String("cachedir", "/tmp/bazel-worker-cache", "Directory to store cached objects")
 )

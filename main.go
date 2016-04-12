@@ -19,7 +19,7 @@ import (
 	"github.com/golang/protobuf/proto"
 )
 
-func respond(w http.ResponseWriter, workRes *build_remote.RemoteWorkResponse) {
+func respond(w http.ResponseWriter, workRes *remote.RemoteWorkResponse) {
 	b, err := proto.Marshal(workRes)
 	if err != nil {
 		log.Println(err)
@@ -28,7 +28,7 @@ func respond(w http.ResponseWriter, workRes *build_remote.RemoteWorkResponse) {
 	}
 }
 
-func writeError(w http.ResponseWriter, statusCode int, workRes *build_remote.RemoteWorkResponse, err error) {
+func writeError(w http.ResponseWriter, statusCode int, workRes *remote.RemoteWorkResponse, err error) {
 	log.Println(err)
 	w.WriteHeader(statusCode)
 	workRes.Exception = err.Error()
@@ -36,7 +36,7 @@ func writeError(w http.ResponseWriter, statusCode int, workRes *build_remote.Rem
 	respond(w, workRes)
 }
 
-func ensureCached(cacheBaseURL string, file *build_remote.FileEntry, workDir string) error {
+func ensureCached(cacheBaseURL string, file *remote.FileEntry, workDir string) error {
 	filePath := filepath.Join(workDir, file.Path)
 	if _, err := os.Stat(filePath); err == nil || !os.IsNotExist(err) {
 		return nil
@@ -60,7 +60,7 @@ func ensureCached(cacheBaseURL string, file *build_remote.FileEntry, workDir str
 			return err
 		} else {
 			defer f.Close()
-			cacheEntry := new(build_remote.CacheEntry)
+			cacheEntry := new(remote.CacheEntry)
 
 			b, err := ioutil.ReadAll(resp.Body)
 			if err != nil {
@@ -78,7 +78,7 @@ func ensureCached(cacheBaseURL string, file *build_remote.FileEntry, workDir str
 }
 
 func writeCacheEntry(cacheBaseURL string, key string, data []byte) error {
-	cacheEntry := new(build_remote.CacheEntry)
+	cacheEntry := new(remote.CacheEntry)
 	cacheEntry.FileContent = data
 	writePath := fmt.Sprintf("%s/%s", cacheBaseURL, key)
 	log.Println(writePath)
@@ -96,7 +96,7 @@ func writeCacheEntry(cacheBaseURL string, key string, data []byte) error {
 	return nil
 }
 
-func writeActionCacheEntry(cacheBaseURL string, key string, cacheEntry *build_remote.CacheEntry) error {
+func writeActionCacheEntry(cacheBaseURL string, key string, cacheEntry *remote.CacheEntry) error {
 	writePath := fmt.Sprintf("%s/%s", cacheBaseURL, key)
 	log.Println(writePath)
 	b, err := proto.Marshal(cacheEntry)
@@ -113,8 +113,8 @@ func writeActionCacheEntry(cacheBaseURL string, key string, cacheEntry *build_re
 }
 
 func HandleBuildRequest(w http.ResponseWriter, r *http.Request) {
-	workReq := new(build_remote.RemoteWorkRequest)
-	workRes := new(build_remote.RemoteWorkResponse)
+	workReq := new(remote.RemoteWorkRequest)
+	workRes := new(remote.RemoteWorkResponse)
 
 	b, err := ioutil.ReadAll(r.Body)
 	if err != nil {
@@ -169,7 +169,7 @@ func HandleBuildRequest(w http.ResponseWriter, r *http.Request) {
 	workRes.Out = stdout.String()
 	workRes.Err = stderr.String()
 
-	outputActionCache := new(build_remote.CacheEntry)
+	outputActionCache := new(remote.CacheEntry)
 
 	for _, outputFile := range workReq.GetOutputFiles() {
 		filePath := filepath.Join(tmpDir, outputFile.Path)

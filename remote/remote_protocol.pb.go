@@ -3,7 +3,7 @@
 // DO NOT EDIT!
 
 /*
-Package build_remote is a generated protocol buffer package.
+Package remote is a generated protocol buffer package.
 
 It is generated from these files:
 	src/main/protobuf/remote_protocol.proto
@@ -14,7 +14,7 @@ It has these top-level messages:
 	RemoteWorkRequest
 	RemoteWorkResponse
 */
-package build_remote
+package remote
 
 import proto "github.com/golang/protobuf/proto"
 import fmt "fmt"

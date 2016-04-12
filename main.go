@@ -29,7 +29,6 @@ func respond(w http.ResponseWriter, workRes *remote.RemoteWorkResponse) {
 }
 
 func writeError(w http.ResponseWriter, statusCode int, workRes *remote.RemoteWorkResponse, err error) {
-	log.Println(err)
 	w.WriteHeader(statusCode)
 	workRes.Exception = err.Error()
 	workRes.Success = false
@@ -81,7 +80,6 @@ func writeCacheEntry(cacheBaseURL string, key string, data []byte) error {
 	cacheEntry := new(remote.CacheEntry)
 	cacheEntry.FileContent = data
 	writePath := fmt.Sprintf("%s/%s", cacheBaseURL, key)
-	log.Println(writePath)
 	b, err := proto.Marshal(cacheEntry)
 	if err != nil {
 		return err
@@ -98,7 +96,6 @@ func writeCacheEntry(cacheBaseURL string, key string, data []byte) error {
 
 func writeActionCacheEntry(cacheBaseURL string, key string, cacheEntry *remote.CacheEntry) error {
 	writePath := fmt.Sprintf("%s/%s", cacheBaseURL, key)
-	log.Println(writePath)
 	b, err := proto.Marshal(cacheEntry)
 	if err != nil {
 		return nil
@@ -134,7 +131,7 @@ func HandleBuildRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Println(tmpDir)
+	log.Println("Creating workdir:", tmpDir)
 	defer os.RemoveAll(tmpDir)
 
 	for _, inputFile := range workReq.GetInputFiles() {
@@ -143,7 +140,7 @@ func HandleBuildRequest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	log.Println(workReq.Arguments)
+	log.Println("Executing:", workReq.Arguments)
 
 	cmd := exec.Command(workReq.Arguments[0], workReq.Arguments[1:]...)
 	var stdout bytes.Buffer
@@ -183,7 +180,6 @@ func HandleBuildRequest(w http.ResponseWriter, r *http.Request) {
 			checksum := md5.Sum(b)
 			writeCacheEntry(*cacheBaseURL, hex.EncodeToString(checksum[:md5.Size]), b)
 			outputFile.ContentKey = hex.EncodeToString(checksum[:md5.Size])
-			log.Println(outputFile)
 			outputActionCache.Files = append(outputActionCache.Files, outputFile)
 		}
 	}

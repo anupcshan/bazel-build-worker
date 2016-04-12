@@ -1,11 +1,12 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_prefix", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_prefix", "go_binary")
 
 go_prefix("github.com/anupcshan/bazel-build-worker")
 
-go_library(
-    name = "go_default_library",
-    srcs = glob(["*.go"]),
+go_binary(
+    name = "build-worker",
+    srcs = glob(["main.go"]),
     deps = [
         "//remote:go_default_library",
+        "//vendor/github.com/golang/protobuf/proto:go_default_library",
     ],
 )

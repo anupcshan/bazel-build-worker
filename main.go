@@ -171,6 +171,17 @@ func (bh *BuildRequestHandler) HandleBuildRequest(w http.ResponseWriter, r *http
 		}
 	}
 
+	// Most actions expect directories for output files to exist up front.
+	for _, outputFile := range workReq.GetOutputFiles() {
+		filePath := filepath.Join(workDir, outputFile.Path)
+
+		dir := path.Dir(filePath)
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			writeError(w, http.StatusInternalServerError, workRes, err)
+			return
+		}
+	}
+
 	if *logCommands {
 		log.Println("Executing:", workReq.Arguments)
 	}

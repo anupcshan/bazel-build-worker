@@ -87,7 +87,7 @@ func linkCachedObject(relPath string, workDir string, cachePath string) error {
 		return err
 	}
 
-	return os.Link(cachePath, filePath)
+	return os.Symlink(cachePath, filePath)
 }
 
 func writeCacheEntry(cacheBaseURL string, key string, data []byte) error {
@@ -171,7 +171,9 @@ func (bh *BuildRequestHandler) HandleBuildRequest(w http.ResponseWriter, r *http
 		}
 	}
 
-	log.Println("Executing:", workReq.Arguments)
+	if *logCommands {
+		log.Println("Executing:", workReq.Arguments)
+	}
 
 	cmd := exec.Command(workReq.Arguments[0], workReq.Arguments[1:]...)
 	var stdout bytes.Buffer
@@ -188,6 +190,15 @@ func (bh *BuildRequestHandler) HandleBuildRequest(w http.ResponseWriter, r *http
 
 	err = cmd.Run()
 	if err != nil {
+		if *logCommands {
+			log.Println("===================")
+			log.Println("Execution failed:")
+			log.Println("STDOUT")
+			log.Println(stdout.String())
+			log.Println("STDERR")
+			log.Println(stderr.String())
+			log.Println("===================")
+		}
 		workRes.Out = stdout.String()
 		workRes.Err = stderr.String()
 		writeError(w, http.StatusOK, workRes, err)
@@ -245,4 +256,5 @@ var (
 	cacheBaseURL = flag.String("cache-base-url", "http://localhost:5701/hazelcast/rest/maps/hazelcast-build-cache", "Base of cache URL to connect to")
 	workdirRoot  = flag.String("workdir-root", "/tmp/", "Directory to create working subdirectories to execute actions in")
 	cacheDir     = flag.String("cachedir", "/tmp/bazel-worker-cache", "Directory to store cached objects")
+	logCommands  = flag.Bool("log-commands", true, "Log all command executions (include stdout/stderr in case of failures)")
 )

@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"crypto/md5"
 	"encoding/hex"
+	_ "expvar"
 	"flag"
 	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"os/exec"
 	"path"
@@ -151,7 +153,10 @@ func (bh *BuildRequestHandler) HandleBuildRequest(w http.ResponseWriter, r *http
 	}
 
 	log.Println("Creating workdir:", workDir)
-	defer os.RemoveAll(workDir)
+	defer func(start time.Time) {
+		os.RemoveAll(workDir)
+		log.Printf("Completed request in %s", time.Since(start))
+	}(time.Now())
 
 	var wg sync.WaitGroup
 	for _, inputFile := range workReq.GetInputFiles() {
@@ -162,7 +167,9 @@ func (bh *BuildRequestHandler) HandleBuildRequest(w http.ResponseWriter, r *http
 		}(inputFile.ContentKey, inputFile.Executable)
 	}
 
+	cacheStart := time.Now()
 	wg.Wait()
+	log.Printf("Completed caching input files in %s", time.Since(cacheStart))
 
 	for _, inputFile := range workReq.GetInputFiles() {
 		if err := linkCachedObject(inputFile.Path, workDir, bh.diskCache.GetLink(inputFile.ContentKey)); err != nil {

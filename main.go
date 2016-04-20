@@ -146,16 +146,18 @@ func (bh *BuildRequestHandler) HandleBuildRequest(w http.ResponseWriter, r *http
 		return
 	}
 
+	logger := log.New(os.Stderr, fmt.Sprintf("[%s] ", workReq.OutputKey), log.Lshortfile|log.Lmicroseconds)
+
 	workDir, err := ioutil.TempDir(*workdirRoot, "workdir")
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, workRes, err)
 		return
 	}
 
-	log.Println("Creating workdir:", workDir)
+	logger.Println("Creating workdir:", workDir)
 	defer func(start time.Time) {
 		os.RemoveAll(workDir)
-		log.Printf("Completed request in %s", time.Since(start))
+		logger.Printf("Completed request in %s", time.Since(start))
 	}(time.Now())
 
 	var wg sync.WaitGroup
@@ -169,7 +171,7 @@ func (bh *BuildRequestHandler) HandleBuildRequest(w http.ResponseWriter, r *http
 
 	cacheStart := time.Now()
 	wg.Wait()
-	log.Printf("Completed caching input files in %s", time.Since(cacheStart))
+	logger.Printf("Completed caching input files in %s", time.Since(cacheStart))
 
 	for _, inputFile := range workReq.GetInputFiles() {
 		if err := linkCachedObject(inputFile.Path, workDir, bh.diskCache.GetLink(inputFile.ContentKey)); err != nil {
@@ -189,10 +191,6 @@ func (bh *BuildRequestHandler) HandleBuildRequest(w http.ResponseWriter, r *http
 		}
 	}
 
-	if *logCommands {
-		log.Println("Executing:", workReq.Arguments)
-	}
-
 	cmd := exec.Command(workReq.Arguments[0], workReq.Arguments[1:]...)
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -206,16 +204,19 @@ func (bh *BuildRequestHandler) HandleBuildRequest(w http.ResponseWriter, r *http
 	}
 	cmd.Env = env
 
+	if *logCommands {
+		logger.Println("Executing:", workReq.Arguments)
+	}
 	err = cmd.Run()
 	if err != nil {
 		if *logCommands {
-			log.Println("===================")
-			log.Println("Execution failed:")
-			log.Println("STDOUT")
-			log.Println(stdout.String())
-			log.Println("STDERR")
-			log.Println(stderr.String())
-			log.Println("===================")
+			logger.Println("===================")
+			logger.Println("Execution failed:")
+			logger.Println("STDOUT")
+			logger.Println(stdout.String())
+			logger.Println("STDERR")
+			logger.Println(stderr.String())
+			logger.Println("===================")
 		}
 		workRes.Out = stdout.String()
 		workRes.Err = stderr.String()
